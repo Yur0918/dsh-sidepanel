@@ -54,12 +54,11 @@ test("slot registrations use stable, idempotent ids", () => {
 	};
 	exports.apply(fakeCtx);
 	assert.deepEqual(registered.map((r) => r.name + ":" + r.id).sort(), [
-		"conversation.session.header.utilities:sidepanel-toggle",
-		"shell.overlay:sidepanel-panel"
+		"conversation.session.header.utilities:sidepanel-toggle"
 	]);
 	// applying twice must not throw and must re-register the same ids (HMR-safe)
 	exports.apply(fakeCtx);
-	assert.equal(registered.length, 4);
+	assert.equal(registered.length, 2); // single entry: toggle only (panel mounts inside it)
 });
 
 test("sanitizeState clamps width and normalizes tabs and flags", () => {
