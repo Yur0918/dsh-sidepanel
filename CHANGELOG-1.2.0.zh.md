@@ -1,4 +1,4 @@
-# dsh-sidepanel 1.1.0 变更说明与交接文档
+# dsh-sidepanel 变更说明与交接文档（1.1.0 → 1.2.0）
 
 日期:2026-08-31 · 变更范围:侧聊模型选择 + 发送吸顶/智能滚动 · 零内核改动,零依赖新增
 
@@ -124,3 +124,43 @@
 - scroll 事件(40px 内无 reflow)从缓存挑「最后一条自然位置越过顶线」的行,单独挂 sticky 类;
 - 任意时刻最多一条钉住;上翻历史时钉住行逐条切换(实测 3000px 上翻正确从最新条切到历史行);
 - 会话重挂载自动重建缓存。
+
+
+---
+
+# 1.2.0（2026-09-01）UI/UX 优化 pass + 渲染修复
+
+## UI 设计专家（33 处）
+- 间距归一 4px 网格（7/10/11/13px 等杂乱值 → 4/8/12/16）
+- 圆角体系三档（6/10/14）
+- 交互蓝 #3964fe 收敛至主操作/选中态；文字色阶统一走 DSW 别名变量
+- 全部可交互元素补 :focus-visible 轮廓（2px #3964fe, offset 2px）
+- assistant 气泡背景改用 --dsw-alias-interactive-bg-hover
+- 深色模式硬编码浅色值补变量包裹
+
+## UX 补齐（主线落地）
+- 发送失败恢复输入草稿（不再要求重新打字）
+- 模型选择器首次使用提示圆点（点击一次后 localStorage 记忆消失）
+- 产物列表骨架屏加载行（替代文字「同步中…」）
+- 产物列表 Home/End 键盘跳转
+
+## 渲染修复（本轮关键）
+**问题**：模型切换轮换子会话后，面板整体消失（toggle 也不渲染），重启/清缓存无效。
+
+**根因链**（CDP 早期错误钩子石锤）：
+1. 22:53 sticky 重写的字符串切割误删了 `panelStore/usePanelState/useFrameTrack/apiGet/apiPost` 五个函数定义 —— `usePanelState is not defined` / `apiGet is not defined` 导致 ToggleButton/SidePanel 渲染抛错；
+2. DSH SlotCore 对渲染抛错的 entry 执行 **静默 abdicate（退役）**——错误不进 console，entry 被踢出渲染集合，这就是「零报错但组件消失」的原因。
+
+**修复**：
+- 从 dsh-user-addons 同源实现恢复 apiGet/apiPost；重写恢复 panelStore/usePanelState/useFrameTrack；
+- **单入口挂载**：sidepanel-panel 不再独立注册（两个 entry 同 cell 会互相 shadow），改由 ToggleButton 内部 portal 到 body 级 host（`#dsh-sidepanel-host`）——一个注册携带面板+按钮，cell 阴影永远不会再清空面板；
+- sessionId 在无 useSessions 的槽位改由主对话 React fiber 探测（`readMainSessionId`）。
+
+## 验证
+- 单元测试 26/26（含 HMR 幂等、槽位注册数、恢复回放）
+- 浏览器端到端：toggle/panel(dock 413px)/模型按钮/侧聊收发（minimax-m3:free 回复「通」）/历史回放 4 条全量
+- 单元覆盖注意：槽位注册期望已更新为单入口（仅 toggle entry）
+
+## 推送
+- https://github.com/Yur0918/dsh-sidepanel （v1.2.0 标签，含 dsh.bundle manifest + cordis.patch.yml）
+- 回滚：`git checkout v-baseline-0831 -- lib/client.js && launchctl kickstart -k gui/$(id -u)/com.deepseek.dsh`
