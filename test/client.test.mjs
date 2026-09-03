@@ -188,6 +188,47 @@ test("stickModeFor pauses on manual scroll-up and follows at the bottom", () => 
 	assert.equal(P.stickModeFor({ distanceFromBottom: 5000, userPinned: true }), "follow");
 });
 
+// fake DOM node for pickBoxedChild: injectable computed display + class set
+function fakeEl(display, children, ownClasses) {
+	const classes = new Set(ownClasses || []);
+	return { display, children, classList: { contains: (c) => classes.has(c) } };
+}
+
+test("pickBoxedChild descends through box-less slot hosts (regression: display:contents wrapper made every tall check measure 0)", () => {
+	const displayOf = (el) => el.display;
+	const isOurs = (el) => el.classList.contains("dsp-sticky-toggle") || el.classList.contains("dsp-fold-toggle") || el.classList.contains("dsp-fold-bar");
+	const realBox = fakeEl("flex", []);
+	// the live-app shape: flowItem > [slot host display:contents] > userRow
+	const item = fakeEl("block", [fakeEl("contents", [realBox])]);
+	assert.equal(P.pickBoxedChild(item, displayOf, isOurs), realBox);
+	// deep nesting: chained box-less wrappers still resolve to the first box
+	const deep = fakeEl("block", [fakeEl("contents", [fakeEl("contents", [fakeEl("flex", [])])])]);
+	assert.equal(P.pickBoxedChild(deep, displayOf, isOurs), deep.children[0].children[0].children[0]);
+	// our appended chips are siblings of the slot host: skipped, never returned
+	const withChip = fakeEl("block", [
+		fakeEl("flex", [], ["dsp-sticky-toggle"]),
+		fakeEl("contents", [realBox])
+	]);
+	assert.equal(P.pickBoxedChild(withChip, displayOf, isOurs), realBox);
+	// direct real box without any wrapper still works
+	const plain = fakeEl("block", [realBox]);
+	assert.equal(P.pickBoxedChild(plain, displayOf, isOurs), realBox);
+	// empty flowItem: null — callers treat as height 0 / no fold
+	assert.equal(P.pickBoxedChild(fakeEl("block", []), displayOf, isOurs), null);
+});
+
+test("stickyCollapseFor folds tall pinned prompts and honors explicit expansion", () => {
+	const TH = P.STICKY_COLLAPSE_THRESHOLD_PX;
+	// short bubbles pin as-is: no fold, no toggle chip
+	assert.equal(P.stickyCollapseFor({ pinnedHeight: 0 }), "none");
+	assert.equal(P.stickyCollapseFor({ pinnedHeight: TH - 1, userExpanded: true }), "none");
+	// tall bubbles fold unless the user explicitly expanded this row
+	assert.equal(P.stickyCollapseFor({ pinnedHeight: TH + 1 }), "collapsed");
+	assert.equal(P.stickyCollapseFor({ pinnedHeight: 4000 }), "collapsed");
+	assert.equal(P.stickyCollapseFor({ pinnedHeight: 4000, userExpanded: true }), "expanded");
+	assert.equal(P.stickyCollapseFor({ pinnedHeight: TH + 1, userExpanded: false }), "collapsed");
+});
+
 test("normalizeModelList flattens groups, arrays and catalog shapes", () => {
 	// llm catalog groups shape
 	const groups = { groups: [

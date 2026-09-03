@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DSH 吸顶折叠失效 · 排查报告（1.3.3 修复）</title>
+<style>
+:root{--bg:#0f1115;--card:#1a1d24;--card2:#222631;--line:#2c3340;--txt:#e6e9ef;--sub:#8b93a3;--acc:#5b8cff;--acc2:#22d3ee;--ok:#34d399;--bad:#f87171;--warn:#fbbf24}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;background:var(--bg);color:var(--txt);line-height:1.65}
+.wrap{max-width:1080px;margin:0 auto;padding:36px 22px 70px}
+header h1{margin:0 0 6px;font-size:25px}
+header .sub{color:var(--sub);font-size:13px}
+.tagrow{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0 4px}
+.tag{font-size:12px;padding:3px 10px;border-radius:20px;background:var(--card);border:1px solid var(--line)}
+.tag.ok{color:var(--ok);border-color:rgba(52,211,153,.35)}
+.tag.bad{color:var(--bad);border-color:rgba(248,113,113,.35)}
+h2{font-size:19px;margin:34px 0 12px;display:flex;align-items:center;gap:9px}
+h2 .dot{width:9px;height:9px;border-radius:50%;background:var(--acc2);display:inline-block;flex:none}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:12px 0}
+.card h3{margin:0 0 8px;font-size:15px}
+.muted{color:var(--sub);font-size:13px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;background:#0b0d11;border-radius:6px;padding:1px 6px;color:#9fe8c8;overflow-wrap:anywhere}
+pre{background:#0b0d11;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.5px;line-height:1.6}
+pre code{background:none;padding:0}
+.verdict{border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.07)}
+.verdict h3{color:var(--bad)}
+.domtree{display:flex;flex-direction:column;gap:0;font-family:ui-monospace,Menlo,monospace;font-size:13px}
+.node{border:1px solid var(--line);border-radius:10px;padding:9px 14px;background:var(--card2)}
+.node .nlabel{color:var(--acc2)}
+.node .nbad{color:var(--bad)}
+.node .ngood{color:var(--ok)}
+.arrow{color:var(--sub);padding:2px 0 2px 26px;font-size:12px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+th{background:var(--card2);color:var(--txt);font-weight:600}
+td .bad{color:var(--bad);font-weight:600}
+td .good{color:var(--ok);font-weight:600}
+.steps{display:flex;flex-direction:column;gap:14px;margin:14px 0}
+.step{display:flex;gap:14px;align-items:flex-start}
+.step .num{flex:none;width:28px;height:28px;border-radius:50%;background:rgba(91,140,255,.15);color:var(--acc);display:grid;place-items:center;font-weight:700;font-size:13px;margin-top:2px}
+.step .body{min-width:0}
+.step .body b{display:block;margin-bottom:2px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+.metric{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.metric b{display:block;font-size:21px;color:var(--acc2)}
+.metric span{font-size:12px;color:var(--sub)}
+.metric.good b{color:var(--ok)}
+.metric.bad b{color:var(--bad)}
+.fixlist{margin:8px 0 0;padding-left:20px}
+.fixlist li{margin:7px 0}
+footer{margin-top:44px;color:var(--sub);font-size:12px;text-align:center;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<h1>DSH 吸顶消息折叠失效 · 排查报告</h1>
+<p class="sub">对象：dsh-sidepanel 1.3.0–1.3.2 的「吸顶自动折叠 + 悬停手动折叠」· 样本会话：定时任务工作区「【每日定时播报 · DSH 插件市」· 环境DSH 0.1.1-rc.2 · 127.0.0.1:3080</p>
+<div class="tagrow">
+<span class="tag bad">问题：长消息折叠从未生效</span>
+<span class="tag">根因已定位</span>
+<span class="tag ok">已修复并实测验证（1.3.3）</span>
+<span class="tag">29 项测试通过</span>
+</div>
+</header>
+
+<h2><span class="dot"></span>结论（TL;DR）</h2>
+<div class="card verdict">
+<h3>根因：折叠逻辑量错了元素 —— flowItem 的第一个子元素是 display:contents 的插槽壳，scrollHeight 恒为 0</h3>
+<p>DSH 会话 UI 渲染每条消息时，会在 <code>.flowItem</code> 内先插一层插槽宿主 <code>&lt;div data-slot="conversation.chat.node" style="display:contents"&gt;</code>。这个壳不生成 CSS 盒子，测高恒为 0。而折叠代码三处都用 <code>item.firstElementChild</code> 当内容元素：<code>stickyCollapseFor({pinnedHeight: 0})</code> 恒判 <code>none</code> → 钉住长消息从不折叠、无「展开/收起」角标；<code>0 &gt; 100</code> 恒假 → 悬停「折叠 ⌃」从不出现。配套 CSS 的 <code>&gt; div:first-child</code> 也命中这层无盒壳，clip-path/背景全部落空。</p>
+<p class="muted">该缺陷对所有会话、所有长消息生效，与具体会话无关——【每日定时播报 会话只是提示词最长（942px）、钉住后最显眼。吸顶 pin 本身（1.2.0 的 position:sticky）不受影响，所以看起来「钉住正常、折叠静默失效」。单元测试没拦住：纯函数测试只验证给定高度后的判定，DOM 测高这段不在覆盖内。</p>
+</div>
+
+<h2><span class="dot"></span>真实 DOM 结构（实测）</h2>
+<div class="card">
+<div class="domtree">
+<div class="node">div.flowItem <span class="nlabel">Md3f7G_flowItem</span> —— 真实盒子 942px</div>
+<div class="arrow">└ 第一个子元素 = 折叠代码测高的对象</div>
+<div class="node nbad">div[data-slot="conversation.chat.node"] <span class="nbad">style="display:contents" → scrollHeight = 0，无盒</span></div>
+<div class="arrow">└ 真实内容在壳里面</div>
+<div class="node">div.userRow <span class="ngood">真实内容盒：942px（【每日定时播报 提示词）</span></div>
+<div class="arrow">└</div>
+<div class="node">div.userStack → div.bubble（播报正文 1368 字）</div>
+</div>
+<p class="muted" style="margin:12px 0 0">同一会话实测行高分布：播报提示词 942px（userRow）、上下文注入 chip 24px ×2、助手「Think + 回复」2037px（非 userRow，不在折叠设计范围）、统计行 28px。</p>
+</div>
+
+<h2><span class="dot"></span>排查过程</h2>
+<div class="steps">
+<div class="step"><div class="num">1</div><div class="body"><b>核对部署状态</b><p class="muted">插件已装（symlink → 仓库，1.3.2），线上 <code>/plugins/dsh-sidepanel/client.js</code> 与仓库文件 md5 一致，折叠代码已下发——排除「没部署/没加载」。</p></div></div>
+<div class="step"><div class="num">2</div><div class="body"><b>核对会话数据</b><p class="muted">解包 <code>session.jsonl.zstd</code>：播报长文是普通 user/message → 应渲染为 userRow，理论上应可折叠——排除「消息类型不匹配」。</p></div></div>
+<div class="step"><div class="num">3</div><div class="body"><b>真实页面 DOM 断言（ego-browser）</b><p class="muted">进入目标会话探测：吸顶 pin 生效（sticky:1）但 <code>collapsed:0</code>、无角标、<code>foldable:0</code>——折叠链路整体哑火。</p></div></div>
+<div class="step"><div class="num">4</div><div class="body"><b>锁定测量点</b><p class="muted"><code>flowItem.firstElementChild</code> = <code>data-slot</code> 壳（display:contents），<code>scrollHeight=0</code>；真实 userRow 是它的子节点（942px）。三处测高全部踩空。</p></div></div>
+</div>
+
+<h2><span class="dot"></span>修复方案（1.3.3）</h2>
+<div class="card">
+<h3>不再假设「第一个子元素就是内容」</h3>
+<ul class="fixlist">
+<li>新增 <code>pickBoxedChild(item, displayOf, isOurs)</code>：从 flowItem 向下穿透 <code>display:contents</code> 壳（跳过插件自己 appended 的角标/折叠条），找到第一个真实生成盒子的元素；displayOf/isOurs 可注入，纯逻辑可单测。</li>
+<li><code>boxedChildOf(item)</code> live 封装：顺手给真实盒打 <code>.dsp-pin-box</code> 类（幂等），CSS 不再依赖结构假设。</li>
+<li>三处测高/取文本（<code>stickyCollapseFor</code> 的 pinnedHeight、<code>applyFoldPass</code> 的 tall 判定、<code>attachFoldBar</code> 的摘要）全部改走 <code>boxedChildOf</code>。</li>
+<li>CSS：<code>&gt; div:first-child</code> 全部改为后代选择器 <code> .dsp-pin-box</code>（真实盒在壳内层，子选择器打不中）；折叠隐藏用 <code>display:none!important</code>（必须压过壳的内联 <code>display:contents</code>）。</li>
+<li>顺手修正 health 端点版本号（host 半 1.1.0 → 1.3.3，需重启 DSH 后生效，纯标识不影响功能）。</li>
+</ul>
+</div>
+
+<h2><span class="dot"></span>修复前后实测对比（【每日定时播报 · DSH 插件市）</h2>
+<div class="grid2">
+<div class="metric bad"><b>0 / 无</b><span>修复前：折叠测高 scrollHeight、collapsed 状态数、角标数、foldable 数</span></div>
+<div class="metric good"><b>76px 紧凑条</b><span>修复后：942px 钉住提示词折叠为 76px clip 条 + 「展开 ⌄」角标</span></div>
+</div>
+<table>
+<tr><th>探测项</th><th>修复前</th><th>修复后</th></tr>
+<tr><td>钉住行测高（firstElementChild / boxedChild）</td><td><span class="bad">0（display:contents 壳）</span></td><td><span class="good">942（真实 userRow）</span></td></tr>
+<tr><td>自动折叠状态 dsp-main-collapsed</td><td><span class="bad">0（永不触发）</span></td><td><span class="good">1（自动折叠）</span></td></tr>
+<tr><td>「展开 ⌄ / 收起 ⌃」角标</td><td><span class="bad">不存在</span></td><td><span class="good">渲染，点击往返展开/收起正常</span></td></tr>
+<tr><td>clip-path（折叠紧凑条）</td><td><span class="bad">none（规则打中无盒壳）</span></td><td><span class="good">inset(0 0 calc(100% - 76px) round 10px)</span></td></tr>
+<tr><td>不可见区点击穿透 pointer-events</td><td><span class="bad">未生效</span></td><td><span class="good">none</span></td></tr>
+<tr><td>悬停「折叠 ⌃」affordance（foldable）</td><td><span class="bad">0（所有消息不可折叠）</span></td><td><span class="good">1</span></td></tr>
+<tr><td>回归：短消息会话（渲染恢复测试，82px &lt; 100px 阈值）</td><td colspan="2"><span class="good">照旧原样钉住，不折叠、无角标（符合设计）</span></td></tr>
+</table>
+
+<h2><span class="dot"></span>遗留与边界</h2>
+<div class="card">
+<ul class="fixlist">
+<li>折叠功能按 1.3.0 设计只覆盖<b>用户消息</b>（userRow）。本会话里 2037px 的助手「Think + 回复」行不属于折叠范围（上下文注入行本身有原生收起 UI）。</li>
+<li>折叠/展开状态不持久化（1.3.0 既定设计），刷新后按当前滚动位置重新判定。</li>
+<li>host 半（lib/index.js）的 VERSION 常量需 <code>launchctl kickstart -k gui/$(id -u)/com.deepseek.dsh</code> 重启后才显示 1.3.3；client 半修复即时生效，无需重启。</li>
+<li>浏览器里已打开的旧标签页需硬刷新一次才会加载修复后的 client。</li>
+</ul>
+</div>
+
+<footer>dsh-sidepanel 1.3.3 排查报告 · 2026-09-03 · 证据：ego-browser 真实页面 DOM 断言 + session.jsonl.zstd 解包 + 29 项单测</footer>
+</div>
+</body>
+</html>
