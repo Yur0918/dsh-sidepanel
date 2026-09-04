@@ -196,7 +196,7 @@ function fakeEl(display, children, ownClasses) {
 
 test("pickBoxedChild descends through box-less slot hosts (regression: display:contents wrapper made every tall check measure 0)", () => {
 	const displayOf = (el) => el.display;
-	const isOurs = (el) => el.classList.contains("dsp-sticky-toggle") || el.classList.contains("dsp-fold-toggle") || el.classList.contains("dsp-fold-bar");
+	const isOurs = (el) => el.classList.contains("dsp-sticky-toggle");
 	const realBox = fakeEl("flex", []);
 	// the live-app shape: flowItem > [slot host display:contents] > userRow
 	const item = fakeEl("block", [fakeEl("contents", [realBox])]);

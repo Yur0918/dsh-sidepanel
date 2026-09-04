@@ -72,6 +72,11 @@ node --test test/host.test.mjs test/safety.test.mjs test/client.test.mjs
 
 ## 版本
 
+1.3.6(2026-09-04):自检修复——死循环 blocker + 观察器治理 + 泄漏与宽度缓存——
+- 修复审查发现的 blocker:chip 文案无条件写入 → 自己的 MutationObserver 捕获 childList mutation → 帧频自反馈死循环;改为 data-label 比对、仅真变化才写;空闲 1.2s 实测零 mutation。
+- watchMainChat 单例 armed 句柄,重挂前先拆旧(observer/scroll/Resize);remount 分支重置 stickyExpandedEl 与 naturalH,不再持留游离 DOM;滚动器挂 ResizeObserver,中央列宽变化(dock/拖拽/缩放)即重测;补偿标记保存并还原宿主原 margin-top,sweepStaleComp 清扫 React 替换兄弟后的孤儿标记;pick 全量扫描不 early-break;首次滚动器未挂载改观察器等待;chip 文案接入 i18n;删死代码。
+- 测试 28 项全过;详见 CHANGELOG-1.3.6.zh.md。
+
 1.3.5(2026-09-03):滚回原位必展开 + 合并为单按钮——
 - 修复:展开滞回阈值 top-60 对首行消息(top≈16)是负数,首行折叠后永不自动展开;补偿方案保证折叠/展开零位移,滞回带失去存在意义,折叠状态改为直接跟随钉住决策,回滚到消息自然位置必展开。
 - 移除整个手动悬停折叠系统(折叠 ⌃ + fold-bar,约 200 行):它与钉住角标两套位置两套交互(左缘悬停 vs 右上常驻)观感割裂;只保留钉住行右上角一个「展开 ⌄ / 收起 ⌃」切换按钮,角标位置微调。
