@@ -138,3 +138,44 @@ test("decodeZstdLog handles multi-frame concatenation like real session logs", (
 	assert.equal(fold.title, "one");
 	assert.equal(fold.lastContext.model, "m");
 });
+
+test("incremental feed continues a fold across appended batches like live logs", async () => {
+	const { zstdCompressSync } = await import("node:zlib");
+	if (typeof zstdCompressSync !== "function") return;
+	const mk = (lines) => zstdCompressSync(Buffer.from(lines.join("\n") + "\n"));
+	// batch 1: header + a write call; batch 2 (appended later): its result + a user message
+	const b1 = mk([
+		header({ seedLength: 0 }),
+		line("tool/call", { turn: 1, step: 1, callId: "c1", name: "write", arguments: JSON.stringify({ file_path: "/tmp/ws/inc.md", content: "x" }) })
+	]);
+	const b2 = mk([
+		line("tool/result", { turn: 1, step: 1, message: { id: "r1", role: "user", content: [{ type: "tool-result", toolCallId: "c1", content: "ok", isError: false }], source: { kind: "tool", callId: "c1" } } }),
+		line("user/message", { content: [{ type: "text", text: "own turn" }], source: { kind: "user" } }, { seq: 99 })
+	]);
+	// frames are cut in the COMPRESSED byte stream: b1/b2 are plain-text
+	// helpers, c1 is the actual first-frame bytes
+	const c1 = b1;
+	const file1 = c1; // what the host reads before the second batch is appended
+	const file2 = Buffer.concat([c1, b2]); // after the append
+
+	// fold batch 1 alone (as the host does when the log is first seen)
+	const fold = _pure.createSessionFold();
+	const openCalls = new Map();
+	const d1 = _pure.decodeZstdLogFrom(file1, 0);
+	assert.equal(d1.consumed, c1.length, "consumed boundary lands at the first frame end");
+	_pure.feedSessionText(fold, d1.text, openCalls);
+	assert.equal(fold.produced.has("/tmp/ws/inc.md"), false, "unpaired call not yet an artifact");
+
+	// batch 2 arrives: only new frames are decoded, folding continues
+	const d2 = _pure.decodeZstdLogFrom(file2, d1.consumed);
+	assert.equal(d2.consumed, file2.length);
+	_pure.feedSessionText(fold, d2.text, openCalls);
+	_pure.finalizeSessionFold(fold);
+	assert.equal(fold.produced.get("/tmp/ws/inc.md").count, 1, "call/result paired across batches");
+	assert.equal(fold.messages[0].text, "own turn");
+	assert.equal(fold.ownStart, 0, "seedLength 0 → everything is own");
+
+	// nothing new: empty text, boundary unchanged
+	const d3 = _pure.decodeZstdLogFrom(file2, d2.consumed);
+	assert.deepEqual([d3.text, d3.consumed], ["", d2.consumed]);
+});

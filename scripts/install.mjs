@@ -11,19 +11,23 @@ import os from "node:os";
 import url from "node:url";
 
 const pkgRoot = path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), "..");
-const profilesRoot = path.join(os.homedir(), ".dsh", "profiles");
+const dshHome = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== "" ? process.env.DSH_HOME : path.join(os.homedir(), ".dsh");
+// both artifacts derive from the same dshHome: with DSH_HOME set the symlink
+// and the patch row must land in the same home or the loader sees only one
+const profilesRoot = path.join(dshHome, "profiles");
 const linkTarget = path.join(profilesRoot, "node_modules", "dsh-sidepanel");
 const patchFile = path.join(profilesRoot, "web", "cordis.patch.yml");
-const dshHome = process.env.DSH_HOME && process.env.DSH_HOME.trim() !== "" ? process.env.DSH_HOME : path.join(os.homedir(), ".dsh");
-const patchFileResolved = path.join(dshHome, "profiles", "web", "cordis.patch.yml");
+const patchPath = patchFile;
 
 // 1. symlink the package into the profile node_modules
 let step1 = "skipped (already linked)";
+let linkOk = false;
 try {
 	const st = lstatSync(linkTarget);
 	if (st.isSymbolicLink()) {
+		// existsSync follows the link: a dangling link reports false and gets repaired
 		if (existsSync(linkTarget) && readFileSync(linkTarget + "/package.json", "utf8").includes("dsh-sidepanel")) {
-			// existing link is fine
+			linkOk = true;
 		}
 	} else if (st.isDirectory()) {
 		step1 = "ERROR: " + linkTarget + " exists as a real directory; refusing to touch it";
@@ -31,13 +35,15 @@ try {
 		process.exit(1);
 	}
 } catch {
-	// no entry yet: create the symlink
+	// no entry yet: create it below
+}
+if (!linkOk) {
 	try {
 		symlinkSync(pkgRoot, linkTarget);
 		step1 = "linked " + linkTarget + " -> " + pkgRoot;
 	} catch (error) {
 		if (error.code === "EEXIST") {
-			step1 = "linked (replaced stale entry)";
+			step1 = "linked (replaced stale/dangling entry)";
 			rmSync(linkTarget, { force: true });
 			symlinkSync(pkgRoot, linkTarget);
 		} else {
@@ -48,7 +54,6 @@ try {
 console.log("[1/2]", step1);
 
 // 2. add the loader insert row to the web profile patch layer
-const patchPath = existsSync(patchFileResolved) ? patchFileResolved : patchFile;
 
 if (process.argv.includes("--uninstall")) {
 	let removed = false;
@@ -59,9 +64,18 @@ if (process.argv.includes("--uninstall")) {
 			const out = [];
 			for (let i = 0; i < lines.length; i++) {
 				if (lines[i].startsWith("# dsh-sidepanel:")) {
-					// skip: 2 comment lines + "- insert:" + "- id: sidepanel" + "name: dsh-sidepanel"
-					i += 4;
-					removed = true;
+					// structure-driven removal: drop the comment lines, then every
+					// non-empty, non-comment line of the record that follows (record
+					// blocks are blank-line terminated) — resilient to indentation or
+					// row-shape edits, unlike fixed line counts or prefix guessing
+					while (i < lines.length && lines[i].startsWith("#")) i += 1;
+					let sawRecord = false;
+					while (i < lines.length && lines[i].trim() !== "" && !lines[i].startsWith("#")) {
+						sawRecord = true;
+						i += 1;
+					}
+					if (sawRecord) removed = true;
+					i -= 1; // the loop's i++ lands on the first non-record line
 					continue;
 				}
 				out.push(lines[i]);

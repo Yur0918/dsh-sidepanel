@@ -72,6 +72,18 @@ node --test test/host.test.mjs test/safety.test.mjs test/client.test.mjs
 
 ## 版本
 
+1.4.0(2026-09-05):两轮自检——双 P0 修复 + portal dock 恢复 + 增量解码——
+- 环境止损:DSH 核心升 0.1.2-rc.1 引发崩溃循环(dshmarket 升级 1.41.0 恢复兼容;dsh-market-tasks 待适配临时禁用);并发编辑冲突去重。
+- P0:模型选择器坏死(引用不存在的 setPanelModel)→ 改 per-session chatModel.<sessionId> 键持久化;宿主 ensureParentAgent unhandled rejection 可杀进程 → then(settle, settle)。
+- P1:portal 架构下 dock 第四轨挤压失效 → frame 改全局 querySelector("[data-shell-overlay]");会话日志增量解码续折;findSessionFile 加 15s 正/4s 负缓存;拖宽走 ref 零渲染;中文 IME 误发送守卫。
+- 第二轮:SSE 重连对账、双 tab 常挂载、产物手动刷新按钮、预览过期竞态丢弃、模型弹层 Esc 层级、chatStores 驱逐跳过订阅者、abs 去重、install.mjs 路径统一;死代码清理。详见 CHANGELOG-1.4.0.zh.md。
+
+1.3.8(2026-09-05):1.3.7 收口——rest-comp 状态机提为模块级 + 2 组假 DOM 回归测试(apply 不覆盖原值/clear 完整还原/sweep 清孤儿);产物徽标语义修正(随「含扫描来源」开关:关=工具产出数,开=全部数)。
+
+1.3.7(2026-09-05):两轮自检(性能+正确性)——
+- 工作区扫描 30s TTL 缓存(产物面板 5s 轮询不再全量走目录树);滚动路径去掉逐行强制布局读,稳态滚动 O(1) 布局读。
+- blocker:rest-comp 补偿标记状态机断裂——展开后补偿 margin 永不回收(单折叠行会话永久留白);去掉多余 "1" 态,标记存在=原值已存,apply 不覆盖、clear/sweep 按存在性恢复。
+
 1.3.6(2026-09-04):自检修复——死循环 blocker + 观察器治理 + 泄漏与宽度缓存——
 - 修复审查发现的 blocker:chip 文案无条件写入 → 自己的 MutationObserver 捕获 childList mutation → 帧频自反馈死循环;改为 data-label 比对、仅真变化才写;空闲 1.2s 实测零 mutation。
 - watchMainChat 单例 armed 句柄,重挂前先拆旧(observer/scroll/Resize);remount 分支重置 stickyExpandedEl 与 naturalH,不再持留游离 DOM;滚动器挂 ResizeObserver,中央列宽变化(dock/拖拽/缩放)即重测;补偿标记保存并还原宿主原 margin-top,sweepStaleComp 清扫 React 替换兄弟后的孤儿标记;pick 全量扫描不 early-break;首次滚动器未挂载改观察器等待;chip 文案接入 i18n;删死代码。

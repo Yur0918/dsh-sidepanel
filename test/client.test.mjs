@@ -259,3 +259,100 @@ test("pickStoredModel prefers session pick over global and supports clearing", (
 	assert.equal(P.pickStoredModel(null, null).effective, null);
 	assert.equal(P.pickStoredModel("", "  ").effective, null);
 });
+
+test("sanitizeState preserves per-session chatModel overrides and drops junk", () => {
+	const st = P.sanitizeState({
+		open: true,
+		chatModel: "global/model",
+		"chatModel.session-abc": "zai/GLM-5.3",
+		"chatModel.session-empty": "  ",
+		"chatModel.session-num": 42,
+		unrelated: "x"
+	});
+	assert.equal(st["chatModel.session-abc"], "zai/GLM-5.3", "non-empty per-session override survives");
+	assert.equal("chatModel.session-empty" in st, false, "blank override dropped");
+	assert.equal("chatModel.session-num" in st, false, "non-string override dropped");
+	assert.equal("unrelated" in st, false, "unrelated keys dropped");
+	assert.equal(st.chatModel, "global/model");
+});
+
+test("rest-comp roundtrip: apply preserves the host margin, re-apply keeps it, clear restores it", () => {
+	function fakeEl() {
+		const props = {};
+		const attrs = {};
+		return {
+			attrs,
+			style: {
+				getPropertyValue: (k) => props[k] || "",
+				setProperty: (k, v) => { props[k] = String(v); },
+				removeProperty: (k) => { delete props[k]; }
+			},
+			getAttribute: (k) => (k in attrs ? attrs[k] : null),
+			setAttribute: (k, v) => { attrs[k] = String(v); },
+			removeAttribute: (k) => { delete attrs[k]; }
+		};
+	}
+	const item = fakeEl();
+	const sib = fakeEl();
+	item.parentElement = null;
+	item.nextElementSibling = sib;
+	// first apply: no prior margin → saved as "empty", comp written
+	P.applyRestComp(item, 866);
+	assert.equal(sib.attrs["data-dsp-rest-comp"], "empty");
+	assert.equal(sib.style.getPropertyValue("margin-top"), "866px");
+	// re-apply with a different px must NOT overwrite the saved original
+	P.applyRestComp(item, 100);
+	assert.equal(sib.attrs["data-dsp-rest-comp"], "empty");
+	assert.equal(sib.style.getPropertyValue("margin-top"), "100px");
+	// clear: restores (removes) the margin and drops the marker
+	P.clearRestComp(item);
+	assert.equal("data-dsp-rest-comp" in sib.attrs, false);
+	assert.equal(sib.style.getPropertyValue("margin-top"), "");
+	// host had a real margin before the collapse: apply → clear roundtrips it
+	sib.style.setProperty("margin-top", "8px");
+	P.applyRestComp(item, 500);
+	assert.equal(sib.attrs["data-dsp-rest-comp"], "8px");
+	P.clearRestComp(item);
+	assert.equal(sib.style.getPropertyValue("margin-top"), "8px");
+	assert.equal("data-dsp-rest-comp" in sib.attrs, false);
+});
+
+test("rest-comp sweep restores orphaned markers and leaves the keep node untouched", () => {
+	function fakeEl() {
+		const props = {};
+		const attrs = {};
+		return {
+			attrs,
+			style: {
+				getPropertyValue: (k) => props[k] || "",
+				setProperty: (k, v) => { props[k] = String(v); },
+				removeProperty: (k) => { delete props[k]; }
+			},
+			getAttribute: (k) => (k in attrs ? attrs[k] : null),
+			setAttribute: (k, v) => { attrs[k] = String(v); },
+			removeAttribute: (k) => { delete attrs[k]; }
+		};
+	}
+	const keep = fakeEl();
+	const orphanMargin = fakeEl();
+	orphanMargin.attrs["data-dsp-rest-comp"] = "12px";
+	orphanMargin.style.setProperty("margin-top", "999px");
+	const orphanEmpty = fakeEl();
+	orphanEmpty.attrs["data-dsp-rest-comp"] = "empty";
+	orphanEmpty.style.setProperty("margin-top", "777px");
+	const parent = {
+		querySelectorAll: (sel) => (sel === "[data-dsp-rest-comp]" ? [orphanMargin, keep, orphanEmpty] : [])
+	};
+	const item = fakeEl();
+	item.parentElement = parent;
+	P.sweepStaleComp(item, keep);
+	// orphan with a saved margin: restored to the original, marker dropped
+	assert.equal(orphanMargin.style.getPropertyValue("margin-top"), "12px");
+	assert.equal("data-dsp-rest-comp" in orphanMargin.attrs, false);
+	// orphan saved as "empty": comp removed entirely
+	assert.equal(orphanEmpty.style.getPropertyValue("margin-top"), "");
+	assert.equal("data-dsp-rest-comp" in orphanEmpty.attrs, false);
+	// keep node untouched (still compensated)
+	assert.equal(keep.style.getPropertyValue("margin-top"), "");
+	assert.equal("data-dsp-rest-comp" in keep.attrs, false);
+});
