@@ -11,7 +11,8 @@
     "README.md",
     "README.zh.md",
     "LICENSE",
-    "package.json"
+    "package.json",
+    "cordis.patch.yml"
   ],
   "exports": {
     ".": "./lib/index.js",
