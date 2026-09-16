@@ -356,3 +356,86 @@ test("rest-comp sweep restores orphaned markers and leaves the keep node untouch
 	assert.equal(keep.style.getPropertyValue("margin-top"), "");
 	assert.equal("data-dsp-rest-comp" in keep.attrs, false);
 });
+
+// ── native right-rail coexistence (DSH 0.1.5+) ────────────────────────────
+test("native rail probe selectors are grounded in shipped host-package evidence", () => {
+	// Every candidate is a data-* attribute owned by
+	// @deepseek-ai/dsh-client-ui-sidebar-right, read verbatim from the shipped
+	// bundles (no guessed class names; the CSS-module hashes P3OORG_panel /
+	// _1kL45W_button are build-specific and deliberately NOT used):
+	//   0.1.5-rc.2  ~/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-sidebar-right/lib/client.js
+	//     L856  "data-sidebar-right-panel": fullscreen ? "fullscreen" : "push"
+	//     L857  "data-sidebar-right-open": expanded || void 0
+	//     L214  "data-sidebar-right-expand": true        (ExpandButton)
+	//     L837  "data-sidebar-right-toggle": true        (collapse control)
+	//     L822  "data-sidebar-right-mode": next          (fullscreen control)
+	//   0.1.6-alpha.1  dsh016-ex unpack …/package/lib/client.js
+	//     L871 / L872 / L229 / L852 / L837 — same five attributes
+	for (const sel of [
+		"[data-sidebar-right-panel]",
+		"[data-sidebar-right-open]",
+		"[data-sidebar-right-expand]",
+		"[data-sidebar-right-toggle]",
+		"[data-sidebar-right-mode]"
+	]) {
+		assert.ok(P.NATIVE_RAIL_PROBE_SELECTORS.includes(sel), "missing grounded candidate: " + sel);
+	}
+	for (const sel of P.NATIVE_RAIL_PROBE_SELECTORS) {
+		assert.match(sel, /^\[data-sidebar-right-[a-z-]+\]$/, "probe candidates must be rail-owned data attributes");
+	}
+});
+
+test("probeNativeRailHit queries the joined candidate list and survives a missing document", () => {
+	assert.equal(P.probeNativeRailHit(null), false, "no document (tests/SSR) → no hit");
+	assert.equal(P.probeNativeRailHit(undefined), false);
+	assert.equal(P.probeNativeRailHit({}), false, "document without querySelector → no hit, never throws");
+	assert.equal(P.probeNativeRailHit({ querySelector: () => null }), false, "old host: nothing matches");
+	assert.equal(P.probeNativeRailHit({ querySelector: (sel) => (sel.includes("[data-sidebar-right-panel]") ? { tag: "div" } : null) }), true, "rail panel element present → hit");
+	let seen = null;
+	P.probeNativeRailHit({ querySelector: (sel) => { seen = sel; return null; } });
+	assert.equal(seen, P.NATIVE_RAIL_PROBE_SELECTORS.join(","), "one query over all candidates");
+});
+
+test("decideNativeRailAction: auto yields on a hit only while expanded; ignore never acts", () => {
+	assert.equal(P.decideNativeRailAction(true, "auto", true), "collapse", "auto + hit + expanded → collapse");
+	assert.equal(P.decideNativeRailAction(true, "auto", false), "none", "auto + hit + already collapsed → no action");
+	assert.equal(P.decideNativeRailAction(false, "auto", true), "none", "auto + probe miss → no action");
+	assert.equal(P.decideNativeRailAction(false, "auto", false), "none");
+	assert.equal(P.decideNativeRailAction(true, "ignore", true), "none", "ignore + hit → legacy behavior, no action");
+	assert.equal(P.decideNativeRailAction(true, "ignore", false), "none");
+	// missing policy field (old persisted state) must behave exactly as auto
+	assert.equal(P.decideNativeRailAction(true, undefined, true), "collapse");
+	assert.equal(P.decideNativeRailAction(true, null, true), "collapse");
+	// unknown policy strings fail safe to auto (yield), matching sanitizeState
+	assert.equal(P.decideNativeRailAction(true, "bogus", true), "collapse");
+});
+
+test("railObservationStep: baseline first, collapse on absent→present, never on return trip", () => {
+	// first observation of a mount episode only sets the baseline — a persisted
+	// open or an explicit user expand is never undone at mount
+	assert.equal(J(P.railObservationStep(null, true, "auto", true)), J({ next: true, action: "none" }));
+	assert.equal(J(P.railObservationStep(null, false, "auto", true)), J({ next: false, action: "none" }));
+	// unchanged reading: no-op
+	assert.equal(J(P.railObservationStep(true, true, "auto", true)), J({ next: true, action: "none" }));
+	assert.equal(J(P.railObservationStep(false, false, "auto", true)), J({ next: false, action: "none" }));
+	// absent→present while expanded: yield once (user can re-expand)
+	assert.equal(J(P.railObservationStep(false, true, "auto", true)), J({ next: true, action: "collapse" }));
+	// absent→present while collapsed: nothing to yield
+	assert.equal(J(P.railObservationStep(false, true, "auto", false)), J({ next: true, action: "none" }));
+	// present→absent: never auto re-expands (no flapping); under ignore: never acts
+	assert.equal(J(P.railObservationStep(true, false, "auto", true)), J({ next: false, action: "none" }));
+	assert.equal(J(P.railObservationStep(false, true, "ignore", true)), J({ next: true, action: "none" }));
+});
+
+test("sanitizeState keeps nativeRail only when non-default so persisted bytes stay stable", () => {
+	// old states (no field) sanitize to the exact legacy shape — the storage
+	// payload for untouched users is byte-identical to the pre-coexistence build
+	assert.equal(J(P.sanitizeState({ open: true, width: 420 })), J({ open: true, width: 420, tab: "art", includeScan: false, chatModel: null }));
+	assert.equal("nativeRail" in P.sanitizeState({}), false, "default auto is omitted, not written");
+	assert.equal("nativeRail" in P.sanitizeState({ nativeRail: "auto" }), false);
+	assert.equal("nativeRail" in P.sanitizeState({ nativeRail: "bogus" }), false, "junk falls back to (omitted) auto");
+	assert.equal(P.sanitizeState({ nativeRail: "ignore" }).nativeRail, "ignore", "opt-out persists");
+	// JSON round trip: only "ignore" ever reaches localStorage
+	assert.equal(J(P.sanitizeState({ nativeRail: "ignore" })).includes("\"nativeRail\":\"ignore\""), true);
+	assert.equal(J(P.sanitizeState({})).includes("nativeRail"), false);
+});
